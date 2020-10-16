@@ -29,6 +29,7 @@ tf.disable_v2_behavior()
 tf.enable_eager_execution()
 
 TaskRegistry = dataset_providers.TaskRegistry
+MixtureRegistry = dataset_providers.MixtureRegistry
 mock = absltest.mock
 
 
@@ -133,7 +134,7 @@ class TasksTest(test_utils.FakeTaskTest):
   def test_get_cached_stats(self):
     expected_train_stats = {
         "examples": 3,
-        "inputs_tokens": 36, "inputs_max_tokens":13,
+        "inputs_tokens": 36, "inputs_max_tokens": 13,
         "targets_tokens": 18, "targets_max_tokens": 6}
     self.assertEqual(
         expected_train_stats,
@@ -428,6 +429,53 @@ class TasksTest(test_utils.FakeTaskTest):
         {"inputs": 13, "targets": 13},
         split="train", use_cached=False, shuffle=False, seed=42)
     test_utils.assert_datasets_neq(dataset1, dataset2)
+
+
+class MixturesTest(test_utils.FakeTaskTest):
+
+  def test_tasks(self):
+    test_utils.add_task("task1", test_utils.get_fake_dataset)
+    test_utils.add_task("task2", test_utils.get_fake_dataset)
+    MixtureRegistry.add("test_mix1", [("task1", 1), ("task2", 1)])
+    mix = MixtureRegistry.get("test_mix1")
+    self.assertEqual(len(mix.tasks), 2)
+
+    for task in mix.tasks:
+      test_utils.verify_task_matches_fake_datasets(task, use_cached=False)
+      self.assertEqual(mix.get_rate(task), 1)
+
+  def test_num_examples(self):
+    MixtureRegistry.add("test_mix2", [(self.cached_task.name, 1)])
+    mix = MixtureRegistry.get("test_mix2")
+    self.assertEqual(mix.num_input_examples(split="train"), 30)
+
+  def test_get_dataset(self):
+    MixtureRegistry.add("test_mix3", [(self.cached_task.name, 1)])
+
+    task_ds = TaskRegistry.get_dataset(
+        self.cached_task.name, {
+            "inputs": 13,
+            "targets": 13
+        },
+        "train",
+        use_cached=False,
+        shuffle=False)
+
+    mix_ds = MixtureRegistry.get("test_mix3").get_dataset({
+            "inputs": 13,
+            "targets": 13
+        }, "train", use_cached=False, shuffle=False)
+
+    # limit size since get_dataset repeats the dataset
+    mix_ds = mix_ds.take(3)
+
+    # mix.get_dataset strips non-output features
+    task_ds = task_ds.map(lambda x: {
+        "inputs": x["inputs"],
+        "targets": x["targets"]
+    })
+
+    test_utils.assert_datasets_eq(task_ds, mix_ds)
 
 
 if __name__ == "__main__":
